@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useState, useRef } from 'react'
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { atom, useAtom } from 'jotai'
 import {
   BarChart as RBarChart,
@@ -162,21 +162,43 @@ export default function Dashboard() {
       .catch(() => setTickets([]))
   }, [])
 
-  const formatDate = (dateString?: string, fallback?: string) => {
-    const raw = dateString ?? fallback
-    const d = parseDate(raw)
-    if (!d) return (raw || 'Unknown') as string
-    const base: Intl.DateTimeFormatOptions = {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }
-    // If ISO-UTC, display in UTC to avoid local-time shifting the day
-    return d.toLocaleString('en-US', isIsoUTC(raw) ? { ...base, timeZone: 'UTC' } : base)
-  }
+  // reuse date formatters to avoid new Intl instances each call
+  const localDateFmt = useMemo(
+    () =>
+      new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }),
+    []
+  )
+  const utcDateFmt = useMemo(
+    () =>
+      new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'UTC',
+      }),
+    []
+  )
+
+  const formatDate = useCallback(
+    (dateString?: string, fallback?: string) => {
+      const raw = dateString ?? fallback
+      const d = parseDate(raw)
+      if (!d) return (raw || 'Unknown') as string
+      // If ISO-UTC, display in UTC to avoid local-time shifting the day
+      return isIsoUTC(raw) ? utcDateFmt.format(d) : localDateFmt.format(d)
+    },
+    [localDateFmt, utcDateFmt]
+  )
 
   const normalizeBrand = (name?: string) => {
     if (!name) return 'Unknown'
@@ -347,6 +369,21 @@ export default function Dashboard() {
   // index of hovered brand segment for tooltip/centered title (null = none)
   const [hoveredBrandIndex, setHoveredBrandIndex] = useState<number | null>(null)
 
+  // palette + pie data for "Tickets by Brand" (must live inside the component)
+  const brandPalette = useMemo(
+    () => ['#2563eb', '#06b6d4', '#f59e0b', '#10b981', '#8b5cf6', '#f97316', '#ef4444', '#06b6d4'],
+    []
+  )
+  const brandPieData = useMemo(
+    () =>
+      brandChartData.map((b, i) => ({
+        name: b.label,
+        value: b.value,
+        color: brandPalette[i % brandPalette.length],
+      })),
+    [brandChartData, brandPalette]
+  )
+
   // tooltip for the half-donut (follows theme)
   const PieTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null
@@ -394,8 +431,14 @@ export default function Dashboard() {
   }
 
   // dynamic bar sizing so charts fill space better across breakpoints
-  const ticketsBarSize = Math.max(18, Math.min(48, Math.floor(320 / Math.max(1, ticketsPerDay.length))))
-  const brandBarSize = Math.max(18, Math.min(40, Math.floor(320 / Math.max(1, brandChartData.length))))
+  const ticketsBarSize = useMemo(
+    () => Math.max(18, Math.min(48, Math.floor(320 / Math.max(1, ticketsPerDay.length)))),
+    [ticketsPerDay.length]
+  )
+  const brandBarSize = useMemo(
+    () => Math.max(18, Math.min(40, Math.floor(320 / Math.max(1, brandChartData.length)))),
+    [brandChartData.length]
+  )
 
   // date filter used by the All Tickets list
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
@@ -417,6 +460,69 @@ export default function Dashboard() {
       return key === selectedDateKey
     })
   }, [tickets, selectedDateKey])
+
+  const SidebarItem = React.memo(function SidebarItem({
+    icon,
+    label,
+    active,
+    collapsed,
+  }: {
+    icon: React.ReactNode
+    label: string
+    active?: boolean
+    collapsed: boolean
+  }) {
+    const [darkMode] = useAtom(darkModeAtom)
+
+    const textColor = darkMode ? 'text-white/95' : 'text-[#0b1220]'
+    const hoverBg = darkMode ? 'hover:bg-white/05' : 'hover:bg-black/5'
+    const activeBar = !collapsed && active ? (darkMode ? 'bg-[#2b7fa0]' : 'bg-[#cfe5f2]') : undefined
+
+    return (
+      <div className="group w-full relative">
+        <a
+          className={
+            collapsed
+              ? `relative w-full flex items-center justify-center p-2 rounded-md ${hoverBg}`
+              : `relative w-full flex items-center gap-3 pl-12 pr-4 py-3 rounded-md ${hoverBg}`
+          }
+          title={label}
+          role="button"
+          tabIndex={0}
+        >
+          {!collapsed && active && (
+            <span className={`absolute left-3 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full ${activeBar}`} />
+          )}
+
+          {/* Collapsed: show only icon */}
+          {collapsed && (
+            <span className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-white/10">
+              {React.isValidElement(icon)
+                ? React.cloneElement(icon as any, {
+                    className: `h-5 w-5 ${darkMode ? 'text-white/90' : 'text-[#0b1220]'}`,
+                    stroke: 'currentColor',
+                  })
+                : icon}
+            </span>
+          )}
+
+          {/* Expanded: label only (icons intentionally hidden for clean list) */}
+          {!collapsed && <span className={`text-sm font-medium ${textColor}`}>{label}</span>}
+        </a>
+
+        {/* Simple tooltip in collapsed mode */}
+        {collapsed && (
+          <div
+            className={`pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 rounded-md px-2 py-1 text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 ${
+              darkMode ? 'bg-[#0b1220] text-white' : 'bg-white text-[#0b1220]'
+            }`}
+          >
+            {label}
+          </div>
+        )}
+      </div>
+    )
+  })
 
   return (
     <div className={`flex min-h-screen ${darkMode ? 'dark' : ''}`}>
@@ -710,37 +816,26 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                      <RTooltip content={<PieTooltip />} />
-                      {(() => {
-                        const palette = ['#2563eb', '#06b6d4', '#f59e0b', '#10b981', '#8b5cf6', '#f97316', '#ef4444', '#06b6d4']
-                        const pieData = brandChartData.map((b, i) => ({
-                          name: b.label,
-                          value: b.value,
-                          color: palette[i % palette.length],
-                        }))
-
-                        return (
-                          <Pie
-                            data={pieData}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="62%"
-                            startAngle={180}
-                            endAngle={0}
-                            innerRadius="60%"
-                            outerRadius="92%"
-                            paddingAngle={6}
-                            cornerRadius={12}
-                            stroke="transparent"
-                            onMouseEnter={(_, index) => setHoveredBrandIndex(index)}
-                            onMouseLeave={() => setHoveredBrandIndex(null)}
-                          >
-                            {pieData.map((entry, idx) => (
-                              <Cell key={`cell-${idx}`} fill={entry.color} />
-                            ))}
-                          </Pie>
-                        )
-                      })()}
+                      <Pie
+                        data={brandPieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="62%"
+                        startAngle={180}
+                        endAngle={0}
+                        innerRadius="60%"
+                        outerRadius="92%"
+                        paddingAngle={6}
+                        cornerRadius={12}
+                        stroke="transparent"
+                        onMouseEnter={(_, index) => setHoveredBrandIndex(index)}
+                        onMouseLeave={() => setHoveredBrandIndex(null)}
+                      >
+                        {brandPieData.map((entry, idx) => (
+                          <Cell key={`cell-${idx}`} fill={entry.color} />
+                        ))}
+                      </Pie>
                     </PieChart>
                   </ResponsiveContainer>
 
@@ -851,63 +946,32 @@ export default function Dashboard() {
   )
 }
 
-function SidebarItem({
+// Generic chart/card shell
+function ChartShell({
+  title,
   icon,
-  label,
-  active,
-  collapsed,
+  children,
+  className = '',
 }: {
-  icon: React.ReactNode
-  label: string
-  active?: boolean
-  collapsed: boolean
+  title: string
+  icon?: React.ReactNode
+  children: React.ReactNode
+  className?: string
 }) {
-  const [darkMode] = useAtom(darkModeAtom)
-
-  // styles depend on theme
-  const textColor = darkMode ? 'text-white/95' : 'text-[#0b1220]'
-  const iconBg = darkMode ? 'bg-transparent' : 'bg-transparent'
-  const iconWrapBase = `${collapsed ? 'h-10 w-10' : 'h-9 w-9'} inline-flex items-center justify-center rounded-md`
-
-  // active visuals: left bar in expanded, ring in collapsed
-  const activeLeftBar = !collapsed && active ? (darkMode ? 'bg-[#2b7fa0]' : 'bg-[#dde8ef]') : undefined
-  const collapsedRing = collapsed && active ? (darkMode ? 'ring-2 ring-[#2b7fa0]/50' : 'ring-2 ring-[#2563eb]/12') : ''
-
-  const anchor = collapsed
-    ? `relative w-full flex items-center justify-center p-2 ${darkMode ? 'hover:bg-white/03' : 'hover:bg-black/02'}`
-    : `relative w-full flex items-center gap-3 pl-6 pr-4 py-2 ${darkMode ? 'hover:bg-white/03' : 'hover:bg-black/02'}`
-
   return (
-    <div className="group w-full relative">
-      <a className={anchor} title={label} role="button" tabIndex={0}>
-        {/* left indicator for expanded active item */}
-        {!collapsed && active && <span className={`absolute left-3 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full ${activeLeftBar}`} />}
-
-        <span className={`${iconWrapBase} ${iconBg} ${collapsedRing}`}>
-          {React.isValidElement(icon)
-            ? React.cloneElement(icon, {
-                className: `${(icon.props?.className || '')} ${darkMode ? 'text-white' : 'text-[#0b1220]'}`.trim(),
-                stroke: 'currentColor', // ensure SVG stroke follows the text color
-                fill: 'none',
-              })
-            : icon}
-        </span>
-
-        {!collapsed && <span className={`text-sm font-medium ml-2 ${textColor}`}>{label}</span>}
-      </a>
-
-      {/* tooltip for collapsed state (keyboard & hover) */}
-      {collapsed && (
-        <div
-          className={`pointer-events-none absolute left-16 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${darkMode ? 'bg-[#0b1220] text-white' : 'bg-white text-[#0b1220]'}`}
-        >
-          {label}
+    <Card className={`border border-[#eef1f4] dark:border-[#2a2d45] ${className}`}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2">
+          {icon}
+          <CardTitle className="text-blue-600 dark:text-cyan-300 text-lg">{title}</CardTitle>
         </div>
-      )}
-    </div>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   )
 }
 
+// Small metric card used in the top 4 KPIs
 function MetricCard({
   icon,
   title,
@@ -922,72 +986,39 @@ function MetricCard({
   positive: boolean
 }) {
   return (
-    <motion.div variants={{ hidden: { opacity: 0, y: 12, scale: 0.98 }, visible: { opacity: 1, y: 0, scale: 1 } }}>
-      <Card className="bg-white dark:bg-[#14192a] border border-[#eef1f4] dark:border-[#24273a] h-full">
-        <CardHeader className="pb-0">
-          <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-            {icon}
-            <span>{title}</span>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-3">
-          <div className="flex items-end justify-between tabular-nums">
-            <div className="text-2xl md:text-3xl font-semibold">
-              {typeof value === 'number' ? value.toLocaleString() : value}
+    <motion.div
+      variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+      transition={{ duration: 0.25 }}
+    >
+      <Card className="h-full border border-[#eef1f4] dark:border-[#2a2d45]">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-md bg-white/70 dark:bg-[#15192a] border border-[#e5e7eb] dark:border-[#2a2d45] flex items-center justify-center">
+              {icon}
             </div>
-            <span
-              className={`text-xs px-1.5 py-0.5 rounded-md border ${
-                positive
-                  ? 'text-emerald-700 border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20'
-                  : 'text-rose-700 border-rose-200 bg-rose-50 dark:bg-rose-900/20'
-              }`}
-            >
-              {positive ? '▲' : '▼'} {Math.abs(comparePct)}%
-            </span>
+            <div className="flex-1">
+              <div className="text-sm text-gray-600 dark:text-gray-400">{title}</div>
+              <div className="text-2xl font-semibold text-gray-900 dark:text-white tabular-nums">
+                {typeof value === 'number' ? value.toLocaleString() : value}
+              </div>
+              <div
+                className={`mt-1 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border ${
+                  positive
+                    ? 'text-emerald-700 border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20'
+                    : 'text-rose-700 border-rose-200 bg-rose-50 dark:bg-rose-900/20'
+                }`}
+              >
+                {positive ? '▲' : '▼'} {Math.abs(comparePct).toLocaleString()}%
+              </div>
+            </div>
           </div>
-          <div className="text-xs text-gray-400 mt-1">Compare to last week</div>
         </CardContent>
       </Card>
     </motion.div>
   )
 }
 
-function ChartShell({
-  title,
-  icon,
-  children,
-  className = '',
-}: {
-  title: string
-  icon?: React.ReactNode
-  children: React.ReactNode
-  className?: string
-}) {
-  return (
-    <Card className={`bg-white dark:bg-[#14192a] border border-[#eef1f4] dark:border-[#24273a] ${className}`}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          {icon}
-          <CardTitle className="text-gray-800 dark:text-gray-200 text-base">{title}</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  )
-}
-
-function LegendRow({ color, label, value }: { color: string; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-      <div className="flex-1">
-        <div className="text-sm text-gray-600 dark:text-gray-300">{label}</div>
-        <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 tabular-nums">{value}</div>
-      </div>
-    </div>
-  )
-}
-
+// Horizontal day scroller used below the Average Tickets chart
 function DailyScroll({
   data,
   selectedKey,
@@ -999,7 +1030,7 @@ function DailyScroll({
   onSelect: (key: string) => void
   darkMode: boolean
 }) {
-  const ref = useRef<HTMLDivElement | null>(null)
+  const ref = React.useRef<HTMLDivElement | null>(null)
   const btnCls =
     'absolute top-1/2 -translate-y-1/2 h-8 w-8 inline-flex items-center justify-center rounded-md bg-white/70 dark:bg-[#1a2033] border border-[#e5e7eb] dark:border-[#2a2d45] backdrop-blur hover:opacity-100 opacity-90'
   return (
