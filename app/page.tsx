@@ -449,7 +449,10 @@ export default function Dashboard() {
                {!collapsed && (
                  <>
                    <div className="h-9 w-9 rounded-md bg-white/10 flex items-center justify-center flex-shrink-0">
-                     <Home className="h-5 w-5 text-white/90" stroke="#000" />
+                     <Home
+                       className={`h-5 w-5 ${darkMode ? 'text-white/90' : 'text-black'}`}
+                       stroke="currentColor"
+                     />
                    </div>
                    <motion.span
                      className={`ml-2 text-sm font-medium hidden md:inline-block overflow-hidden ${darkMode ? 'text-white/95' : 'text-[#0b1220]'}`}
@@ -488,11 +491,11 @@ export default function Dashboard() {
              <SidebarItem icon={<Settings className="h-5 w-5" />} label="Settings" collapsed={collapsed} />
            </nav>
  
-          <div className="mt-auto mb-4 px-3 md:px-6 text-xs transition-opacity duration-200" style={{ color: darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)' }}>
-            <motion.div className="hidden md:block" animate={{ opacity: collapsed ? 0 : 1 }} transition={{ duration: 0.2 }}>
+          {/* <div className="mt-auto mb-4 px-3 md:px-6 text-xs transition-opacity duration-200" style={{ color: darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.5)' }}>
+            <motion.div className="md:block" animate={{ opacity: collapsed ? 0 : 1 }} transition={{ duration: 0.2 }}>
               Powered by VisActor
             </motion.div>
-          </div>
+          </div> */}
          </div>
         </div>
       </motion.aside>
