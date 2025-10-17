@@ -1,6 +1,6 @@
 'use client'
-
-import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import type { TooltipProps } from 'recharts'
 import { atom, useAtom } from 'jotai'
 import {
   BarChart as RBarChart,
@@ -149,6 +149,13 @@ const isIsoUTC = (s?: string) =>
   typeof s === 'string' && /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(s.trim())
 const dateKeyUTC = (d: Date) =>
   `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+
+// place this above `export default function Dashboard() {`
+type RcTooltipProps<T = unknown> = {
+  active?: boolean
+  payload?: Array<{ payload?: T; name?: string; value?: number; color?: string }>
+  label?: string
+}
 
 export default function Dashboard() {
   const [tickets, setTickets] = useState<TicketItem[]>([])
@@ -315,23 +322,7 @@ export default function Dashboard() {
       })
   }, [tickets])
 
-  // Averages for donut (created vs resolved per day)
-  const avgCreated = useMemo(() => {
-    const days = Math.max(ticketsPerDay.length || 1, 1)
-    return Math.round((ticketsPerDay.reduce((s, x) => s + x.count, 0) / days) || 0)
-  }, [ticketsPerDay])
-  const avgResolved = useMemo(() => {
-    const days = Math.max(ticketsPerDay.length || 1, 1)
-    return Math.round(resolvedCount / days)
-  }, [resolvedCount, ticketsPerDay])
-  const avgPieData = useMemo(
-    () => [
-      { name: 'Avg. Created', value: avgCreated, color: cyan },
-      { name: 'Avg. Resolved', value: avgResolved, color: primaryBlue },
-    ],
-    [avgCreated, avgResolved]
-  )
-  const [hoveredAvgIndex, setHoveredAvgIndex] = useState<number | null>(null)
+  // (removed unused avgCreated/avgResolved; daily comparison now uses ticketsPerDay directly)
 
   type ApiResponse = { success?: boolean; error?: string; message?: string }
   const handleDelete = async (ticketId: string) => {
@@ -384,13 +375,17 @@ export default function Dashboard() {
     [brandChartData, brandPalette]
   )
 
-  // tooltip for the half-donut (follows theme)
-  const PieTooltip = ({ active, payload }: any) => {
+  // tooltip for the half-donut (matches theme)
+  type PiePayload = { name?: string; value?: number; color?: string }
+  const PieTooltip = ({ active, payload }: RcTooltipProps<PiePayload>) => {
     if (!active || !payload?.length) return null
-    const p = payload[0]
-    const name = p?.payload?.name ?? p?.name
-    const value = p?.payload?.value ?? p?.value
-    const color = p?.payload?.color ?? p?.fill
+    const p = payload[0] as { payload?: PiePayload; name?: string; value?: number } & { [k: string]: unknown }
+    const pl = p.payload || {}
+    const name = pl.name ?? p.name ?? ''
+    const value = Number(pl.value ?? p.value ?? 0)
+    // support recharts "fill" or custom "color"
+    const fill = (p as unknown as { fill?: string }).fill
+    const color = pl.color ?? (p as unknown as { color?: string }).color ?? fill ?? '#999'
     return (
       <div
         className="rounded-md border px-3 py-2 text-xs shadow-md"
@@ -404,17 +399,19 @@ export default function Dashboard() {
           <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
           <span className="font-medium">{name}</span>
         </div>
-        <div className="mt-1 opacity-80">{Number(value).toLocaleString()} tickets</div>
+        <div className="mt-1 opacity-80">{value.toLocaleString()} tickets</div>
       </div>
     )
   }
 
-  // tooltip for the daily bars (same look as PieTooltip)
-  const DailyBarTooltip = ({ active, payload }: any) => {
+  // tooltip for the daily bars
+  type DayPayload = { label?: string; count?: number }
+  const DailyBarTooltip = ({ active, payload, label }: RcTooltipProps<DayPayload>) => {
     if (!active || !payload?.length) return null
-    const p = payload[0]
-    const label = p?.payload?.label ?? p?.name
-    const value = p?.payload?.count ?? p?.value
+    const p = payload[0] as { payload?: DayPayload; value?: number }
+    const pl = p.payload || {}
+    const dayLabel = pl.label ?? (label || '')
+    const value = Number(pl.count ?? p.value ?? 0)
     return (
       <div
         className="rounded-md border px-3 py-2 text-xs shadow-md"
@@ -424,8 +421,8 @@ export default function Dashboard() {
           color: darkMode ? '#e6e8ff' : '#111',
         }}
       >
-        <div className="font-medium">{label}</div>
-        <div className="mt-1 opacity-80">{Number(value).toLocaleString()} tickets</div>
+        <div className="font-medium">{dayLabel}</div>
+        <div className="mt-1 opacity-80">{value.toLocaleString()} tickets</div>
       </div>
     )
   }
@@ -434,10 +431,6 @@ export default function Dashboard() {
   const ticketsBarSize = useMemo(
     () => Math.max(18, Math.min(48, Math.floor(320 / Math.max(1, ticketsPerDay.length)))),
     [ticketsPerDay.length]
-  )
-  const brandBarSize = useMemo(
-    () => Math.max(18, Math.min(40, Math.floor(320 / Math.max(1, brandChartData.length)))),
-    [brandChartData.length]
   )
 
   // date filter used by the All Tickets list
@@ -498,7 +491,7 @@ export default function Dashboard() {
           {collapsed && (
             <span className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-white/10">
               {React.isValidElement(icon)
-                ? React.cloneElement(icon as any, {
+                ? React.cloneElement(icon as React.ReactElement<{ className?: string; stroke?: string }>, {
                     className: `h-5 w-5 ${darkMode ? 'text-white/90' : 'text-[#0b1220]'}`,
                     stroke: 'currentColor',
                   })
@@ -733,7 +726,6 @@ export default function Dashboard() {
                     data={ticketsPerDay}
                     selectedKey={selectedDateKey}
                     onSelect={(k) => setSelectedDateKey((prev) => (prev === k ? null : k))}
-                    darkMode={darkMode}
                   />
                 </div>
               </div>
@@ -1023,12 +1015,10 @@ function DailyScroll({
   data,
   selectedKey,
   onSelect,
-  darkMode,
 }: {
   data: Array<{ key: string; label: string; count: number }>
   selectedKey: string | null
   onSelect: (key: string) => void
-  darkMode: boolean
 }) {
   const ref = React.useRef<HTMLDivElement | null>(null)
   const btnCls =
